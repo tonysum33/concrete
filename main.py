@@ -6,8 +6,8 @@ import seaborn as sns
 
 class Configuracoes:
     def __init__(self):
-        self.width = 35     # cm
-        self.height = 70     # cm
+        self.width = 40     # cm
+        self.height = 80     # cm
         self.cover = 7.2
         self.deff = self.height - self.cover
         self.dprime = 7.2
@@ -31,7 +31,7 @@ class Configuracoes:
         self.is_seismic_zone = True
 
 
-    # Beta1 (stress block multiplier)
+    # Beta1 (whitney stress block)
     def __beta1(self):
         if self.fc <= 280:
             beta1 = 0.85
@@ -39,24 +39,40 @@ class Configuracoes:
             beta1 = max(0.85 - 0.05 * ((self.fc - 280) / 70), 0.65)
         return beta1
 
+    def stress_strain_steel(self, strain):
+        if abs(strain)* self.Es >= self.fy:
+            return (strain/abs(strain)) * self.fy
+        else:
+            return (strain*self.Es)
+
+    def strain_at_depth(self, 
+                        neutral_axis_depth, 
+                        depth_of_interest):
+        
+        c = neutral_axis_depth
+        if c == 0: c = 0.000001  
+        strain_of_interest = self.ec_max* (c-depth_of_interest)/c
+        return strain_of_interest
+
+
     # stress and strains
     def stress_strain(self, c):
-        es = self.ec_max * (self.deff - c )/ c           # steel strain at tension side
+        es = -self.strain_at_depth(c, self.deff)         # steel strain at tension side
         fs = es * self.Es                                # tensile stress at tension side
-        esprime = self.ec_max * (c - self.dprime) / c    # steel strain at compression side
+        esprime = self.strain_at_depth(c, self.dprime)   # steel strain at compression side
         fsprime = esprime * self.Es                      # tensile stress at compression side
         a = self.beta1 * c                               # compressive stress block depth
         return a, es, fs, esprime, fsprime
 
     # Strength reduction factor
-    def strength_factor(self):
-        phi_factor = 0.65 + 0.25 * (es - self.ey) / (0.005 - self.ey)
-        if phi_factor >= 0.9:
-            phi, classify =0.9, "Tension-controlled"
-        elif phi_factor <= 0.65:
+    def strength_factor(self, et):
+        if et >= 0.005:
+            phi, classify = 0.9, "Tension-controlled"
+        elif et <= 0.002:
             phi, classify = 0.65, "Compression-controlled"
         else:
-            phi, classify = phi_factor, "Transition"
+            phi_factor = 0.65 + 0.25 * (et - self.ey) / (0.005 - self.ey)
+            phi, classify = phi_factor, "Transition"    
         return phi, classify
 
     def forces_moments(self):
@@ -170,7 +186,7 @@ phi_factor = []
 c_value = np.arange(60,8,-0.5)
 for c in c_value:
     a, es, fs, esprime, fsprime =  cfg.stress_strain(c)
-    phi, classify =  cfg.strength_factor()
+    phi, classify =  cfg.strength_factor(es)
     ecc, Pn, Pu, Mn, Mu = cfg.forces_moments()
 
     if ecc <= 1.5 * cfg.height:
@@ -199,4 +215,3 @@ ax.set_xlabel("Moment Mn")
 ax.set_ylabel("Axial Load Pn")
 plt.title("P-M Interation Diagram")
 plt.show()
-

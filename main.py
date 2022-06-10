@@ -40,10 +40,12 @@ class Configuracoes:
         return beta1
 
     def stress_strain_steel(self, strain):
-        if abs(strain)* self.Es >= self.fy:
-            return (strain/abs(strain)) * self.fy
+        if strain > 0:
+            # 拉力為正
+            return min(strain * self.Es, +self.fy)
         else:
-            return (strain*self.Es)
+            # 壓力為負
+            return max(strain * self.Es, -self.fy)
 
     def strain_at_depth(self, 
                         neutral_axis_depth, 
@@ -55,7 +57,7 @@ class Configuracoes:
         return strain_of_interest
 
 
-    # stress and strains
+    # stress and strains  
     def stress_strain(self, c):
         es = -self.strain_at_depth(c, self.deff)         # steel strain at tension side
         fs = es * self.Es                                # tensile stress at tension side
@@ -65,13 +67,16 @@ class Configuracoes:
         return a, es, fs, esprime, fsprime
 
     # Strength reduction factor
-    def strength_factor(self, et):
-        if et >= 0.005:
+    def strength_factor(self, epsilon_t, is_spiral = False):
+        # 橫箍筋 0.65 ；螺箍筋 0.7 
+        phi = 0.65 if is_spiral == False else 0.7
+        epsilon_y = self.fy / self.Es
+        if epsilon_t >= 0.005:
             phi, classify = 0.9, "Tension-controlled"
-        elif et <= 0.002:
-            phi, classify = 0.65, "Compression-controlled"
+        elif epsilon_t <= epsilon_y:
+            phi, classify = phi, "Compression-controlled"
         else:
-            phi_factor = 0.65 + 0.25 * (et - self.ey) / (0.005 - self.ey)
+            phi_factor = phi + 0.25 * (epsilon_t - self.ey) / (0.005 - self.ey)
             phi, classify = phi_factor, "Transition"    
         return phi, classify
 

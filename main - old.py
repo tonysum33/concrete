@@ -31,6 +31,10 @@ class Configuracoes:
 
         self.beta1 = self.__beta1()
 
+        # self.max_rebar_tension_strain = 0.004
+        # self.phi = 0.9
+        # self.is_seismic_zone = True
+
 
     def __beta1(self):
         '''
@@ -68,7 +72,6 @@ class Configuracoes:
         return phi, classify
 
     def forces_moments(self, neutral_axis_depth):
-        
         a = self.beta1 * neutral_axis_depth
         T = self.Ast * min(self.fy,fs)
         Cc = 0.85 * self.fc * a * self.width
@@ -98,13 +101,102 @@ class Rebars:
         area = sum(rebar['area'] for rebar in self.rebars)
         return area
 
+# class Rcdesign:
+#     def __init__(self, cfg: Configuracoes):
+#         """
+#         矩形梁鋼筋設計
+#         :type mat: object
+#         """
+
+#         self.fc = cfg.fc
+#         self.fy = cfg.fy
+#         self.Es = cfg.Es
+#         self.beta1 = cfg.beta1
+#         self.bw = cfg.width
+#         self.depth = cfg.height
+#         self.phi = cfg.phi
+
+#         self.cover = cfg.cover
+#         self.epsilon_c_max = cfg.ec_max
+#         self.epsilon_s_min = cfg.es_min
+#         self.is_seismic_zone = cfg.is_seismic_zone
+#         self.deff = cfg.deff
+#         self.ps_min = self.__ps_min()
+#         self.ps_max = self.__ps_max()
+#         self.as_min = self.ps_min * self.bw * self.deff
+#         self.as_max = self.ps_max * self.bw * self.deff
+
+#     def moment_to_rebar(self, mu: float):
+#         """
+#         :param mu: 係數化彎矩 kgf-cm
+#         :return:
+#         """
+#         # a : the depth of the compression block
+#         a = self.deff - (self.deff ** 2 - 2 * abs(mu) / (0.85 * self.fc * self.phi * self.bw)) ** 0.5
+#         c_max = self.epsilon_c_max / (self.epsilon_c_max + self.epsilon_s_min) * self.deff
+#         a_max = self.beta1 * c_max
+
+#         if a <= a_max:
+#             # 單筋梁
+#             as_t_req = mu / (self.phi * self.fy * (self.deff - a / 2))
+#             as_c_req = 0
+
+#         else:
+#             # 雙筋梁
+#             c_c = 0.85 * self.fc * self.bw * a_max
+#             muc = c_c * (self.deff - a_max / 2) * self.phi
+#             mus = mu - muc
+#             fs = min(self.Es * self.epsilon_c_max * (c_max - self.cover) / c_max, self.fy)
+#             as_c_req = mus / (fs - 0.85 * self.fc) / (self.deff - self.cover) / self.phi
+#             as_t1_req = muc / self.fy / (self.deff - a_max / 2) / self.phi
+#             as_t2_req = mus / self.fy / (self.deff - self.cover) / self.phi
+#             as_t_req = as_t1_req + as_t2_req
+
+#         # as_min = min(self.ps_min * self.bw * self.dp, 4 / 3 * as_t_req)
+#         # as_max = self.ps_max * self.bw * self.dp
+
+#         return as_t_req /self.bw / self.deff
+
+#     def __ps_min(self):
+#         p_min1 = 0.8 * math.sqrt(self.fc) / self.fy
+#         p_min2 = 14 / self.fy
+#         return max(p_min1, p_min2)
+
+#     def __ps_max(self):
+#         # 拉力鋼筋
+#         if self.is_seismic_zone is True:
+#             p_max1 = (self.fc + 100) / (4 * self.fy)
+#             p_max2 = 0.025
+#             return min(p_max1, p_max2)
+
+#         else:
+#             c = self.epsilon_c_max / (0.004 + self.epsilon_c_max)
+#             a = c * self.beta1
+#             return 0.85 * self.fc * a / self.fy
+
+#     def rebar_tension_strain(self, neutral_axis_depth):
+#         return self.epsilon_c_max * (self.deff - neutral_axis_depth) / neutral_axis_depth
+
+# ----------------------------------------------------------
+
+
+# rcd = Rcdesign(cfg)
+# a = rcd.moment_to_rebar(mu=24.07 * 1000 * 100)
+# print(f"ps_min = {rcd.ps_min : 8.4f}")
+# print(f"ps_req = {a : 8.4f}")
+# print(f"ps_max = {rcd.ps_max : 8.4f}")
+
+
+
 cfg = Configuracoes()
+
 nom_load = []
 ult_load = []
 nom_moment = []
 ult_moment = []
 eccentricity = []
 phi_factor = []
+
 
 c_value = np.arange(60,8,-0.5)
 for c in c_value:

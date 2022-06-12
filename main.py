@@ -8,26 +8,21 @@ class Configuracoes:
     def __init__(self):
         self.width = 40     # cm
         self.height = 80     # cm
-        self.cover = 7.2
-        self.deff = self.height - self.cover
-        self.dprime = 7.2
 
         self.fc = 280
         self.fy = 4200
-
         self.ec_max = 0.003                     # concrete maximum strain (Constant)
         self.es_min = 0.005                     # 受拉鋼筋之淨拉應變
         self.Ec = 15000 * self.fc ** 0.5
         self.Es = 2.04 * 10 ** 6                # steel modulus (kgf/cm2)
         self.ey = self.fy / self.Es             # steel strain at yield point
+
         self.rebars = [{"area":12,"coord_x":20,"coord_y":7.2},
                        {"area":12,"coord_x":20,"coord_y":72.8}]
 
         self.rebars_lowest = min(rebar["coord_y"] for rebar in self.rebars)
         self.rebars_totalArea = sum(rebar['area'] for rebar in self.rebars)
 
-        self.Ast = 12
-        self.Asc = 12
 
         self.beta1 = self.__beta1()
 
@@ -70,25 +65,35 @@ class Configuracoes:
     def forces_moments(self, neutral_axis_depth):
         
         a = self.beta1 * neutral_axis_depth
-        T = self.Ast * min(self.fy,fs)
-        Cc = 0.85 * self.fc * a * self.width
-        Cs = self.Asc * min(self.fy, fsprime) - 0.85 * self.fc
-        Pn = Cc + Cs - T
-        Mn = (Cc *(self.deff - a/2) + Cs * (self.deff -self.dprime))   - (self.height/2 - self.dprime) * Pn
+
+        # area_sic : area of steel rebar in concrete compress area
+        steel_area_in_compress_area = 0
+        steel_axial_forces = 0
+        steel_moments = 0
+        for rebar in self.rebars :
+            # multiplying the stress in each layer by the area in each layer.
+            strain, stress = self.steel_strain_stress_at_depth(neutral_axis_depth, rebar["coord_y"])
+            steel_axial_forces += stress * rebar['area']
+            steel_moments += stress * rebar['area'] * rebar["coord_y"]
+            
+            # 混凝土壓力區內之鋼筋面積        
+            if rebar["coord_y"] < a:
+                steel_area_in_compress_area += rebar['area']
+        
+        concrete_axial_forces = 0.85 * self.fc * (a * self.width - steel_area_in_compress_area)
+        Pn = concrete_axial_forces - steel_axial_forces
+        Mn = -concrete_axial_forces * a / 2 + steel_moments + Pn*self.height/2
         Pu = phi * Pn
         Mu = phi * Mn
         ecc = Mn / Pn  
         return ecc, Pn, Pu, Mn, Mu
 
 class Rebars:
-    def __init__(self):
-        self.rebars = [{"area":6,"coord":( 5,  5)},
-                       {"area":6,"coord":( 5, 75)},
-                       {"area":6,"coord":(35,  5)},
-                       {"area":6,"coord":(35, 75)}]
-
+    def __init__(self, rebars_obj):
+        self.rebars = rebars_obj
         self.lowest = self.__lowest()
         self.total_area = self.__total_area()
+        self.coords = self.__coords()
 
     def __lowest(self):
         coord_ymin = min(rebar["coord"][1] for rebar in self.rebars)
@@ -98,6 +103,19 @@ class Rebars:
         area = sum(rebar['area'] for rebar in self.rebars)
         return area
 
+    def __coords(self):
+        return [rebar["coord"] for rebar in self.rebars]   
+
+class Rec:
+    pass
+
+# 鋼筋資料
+rebars = [{"area":6,"coord":( 5,  5)},
+          {"area":6,"coord":( 5, 75)},
+          {"area":6,"coord":(35,  5)},
+          {"area":6,"coord":(35, 75)}]
+rb = Rebars(rebars)
+
 cfg = Configuracoes()
 nom_load = []
 ult_load = []
@@ -106,11 +124,10 @@ ult_moment = []
 eccentricity = []
 phi_factor = []
 
-c_value = np.arange(60,8,-0.5)
-for c in c_value:
 
-    es, fs = cfg.steel_strain_stress_at_depth(c, cfg.rebars[1]['coord_y'])
-    esprime, fsprime = cfg.steel_strain_stress_at_depth(c, cfg.rebars[0]['coord_y'])
+c_value = np.arange(cfg.height,8,-0.5)
+for c in c_value:
+    es, fs = cfg.steel_strain_stress_at_depth(c, cfg.height-cfg.rebars_lowest )
     phi, classify =  cfg.strength_factor(es)
     ecc, Pn, Pu, Mn, Mu = cfg.forces_moments(c)
 
@@ -141,6 +158,6 @@ ax.set_ylabel("Axial Load Pn")
 plt.title("P-M Interation Diagram")
 plt.show()
 
-rebars = Rebars()
-print(rebars.lowest)
-print(rebars.total_area)
+print(rb.total_area)
+print(rb.lowest)
+print(rb.coords)

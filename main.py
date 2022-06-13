@@ -6,8 +6,8 @@ import seaborn as sns
 
 class Configuracoes:
     def __init__(self):
-        self.width = 40     # cm
-        self.height = 80     # cm
+        self.width = 30     # cm
+        self.height = 50     # cm
 
         self.fc = 280
         self.fy = 4200
@@ -17,12 +17,11 @@ class Configuracoes:
         self.Es = 2.04 * 10 ** 6                # steel modulus (kgf/cm2)
         self.ey = self.fy / self.Es             # steel strain at yield point
 
-        self.rebars = [{"area":12,"coord_x":20,"coord_y":7.2},
-                       {"area":12,"coord_x":20,"coord_y":72.8}]
+        self.rebars = [{"area":3*5.067,"coord_x":15,"coord_y":6.5},
+                       {"area":3*5.067,"coord_x":15,"coord_y":43.5}]
 
         self.rebars_lowest = min(rebar["coord_y"] for rebar in self.rebars)
         self.rebars_totalArea = sum(rebar['area'] for rebar in self.rebars)
-
 
         self.beta1 = self.__beta1()
 
@@ -110,11 +109,11 @@ class Rec:
     pass
 
 # 鋼筋資料
-rebars = [{"area":6,"coord":( 5,  5)},
-          {"area":6,"coord":( 5, 75)},
-          {"area":6,"coord":(35,  5)},
-          {"area":6,"coord":(35, 75)}]
-rb = Rebars(rebars)
+# rebars = [{"area":6,"coord":( 5,  5)},
+#           {"area":6,"coord":( 5, 75)},
+#           {"area":6,"coord":(35,  5)},
+#           {"area":6,"coord":(35, 75)}]
+# rb = Rebars(rebars)
 
 cfg = Configuracoes()
 nom_load = []
@@ -124,18 +123,19 @@ ult_moment = []
 eccentricity = []
 phi_factor = []
 
+N = 20
+c_value = np.linspace(0.001, 1.5*cfg.height, N)
 
-c_value = np.arange(cfg.height,8,-0.5)
 for c in c_value:
     es, fs = cfg.steel_strain_stress_at_depth(c, cfg.height-cfg.rebars_lowest )
     phi, classify =  cfg.strength_factor(es)
     ecc, Pn, Pu, Mn, Mu = cfg.forces_moments(c)
 
     if ecc <= 1.5 * cfg.height:
-        nom_load.append(round(Pn))
-        ult_load.append(round(Pu))
-        nom_moment.append(round(Mn))
-        ult_moment.append(round(Mu))
+        nom_load.append(round(Pn/1000))
+        ult_load.append(round(Pu/1000))
+        nom_moment.append(round(Mn/100000))
+        ult_moment.append(round(Mu/100000))
         eccentricity.append(round(ecc))
         phi_factor.append(round(phi,2))
 
@@ -149,15 +149,33 @@ df = pd.DataFrame(dict)
 
 print(df)
 
-sns.set_style("darkgrid")
-fig, ax = plt.subplots(figsize=(13,7))
-ax = sns.scatterplot(x= "Mn", y= "Pn" , data =df, color="g", label="Normal")
-sns.scatterplot(x= "Mu", y= "Pu" , data =df, color="r", label="Ultimate")
-ax.set_xlabel("Moment Mn")
-ax.set_ylabel("Axial Load Pn")
-plt.title("P-M Interation Diagram")
+# sns.set_style("darkgrid")
+# fig, ax = plt.subplots(figsize=(13,7))
+# ax = sns.scatterplot(x= "Mn", y= "Pn" , data =df, color="g", label="Normal")
+# sns.scatterplot(x= "Mu", y= "Pu" , data =df, color="r", label="Ultimate")
+# ax.set_xlabel("Moment Mn")
+# ax.set_ylabel("Axial Load Pn")
+# plt.title("P-M Interation Diagram")
+# plt.show()
+
+
+
+plt.figure() 
+ 
+lines1 = plt.plot(df["Mn"], df["Pn"])
+lines2 = plt.plot(df["Mu"], df["Pu"])
+
+plt.xlim(0)
+plt.title("P-M Interation Diagra")
+plt.xlabel("Mn (tf-m)")
+plt.ylabel("Pn (tf)")
+plt.grid(True)
+
+plt.setp(lines1, linestyle='-' , marker='.')
+plt.setp(lines2, linestyle='--', marker='x')
 plt.show()
 
-print(rb.total_area)
-print(rb.lowest)
-print(rb.coords)
+ 
+# print(rb.total_area)
+# print(rb.lowest)
+# print(rb.coords)

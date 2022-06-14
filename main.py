@@ -5,9 +5,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 class Configuracoes:
-    def __init__(self):
-        self.width = 30     # cm
-        self.height = 50     # cm
+    def __init__(self, Rebars, Rec):
+        self.width = Rec.width       # cm
+        self.height = Rec.height     # cm
+        self.rebars = Rebars.rebars
 
         self.fc = 280
         self.fy = 4200
@@ -16,19 +17,13 @@ class Configuracoes:
         self.Ec = 15000 * self.fc ** 0.5
         self.Es = 2.04 * 10 ** 6                # steel modulus (kgf/cm2)
         self.ey = self.fy / self.Es             # steel strain at yield point
-
-        self.rebars = [{"area":3*5.067,"coord_x":15,"coord_y":6.5},
-                       {"area":3*5.067,"coord_x":15,"coord_y":43.5}]
-
-        self.rebars_lowest = min(rebar["coord_y"] for rebar in self.rebars)
-        self.rebars_totalArea = sum(rebar['area'] for rebar in self.rebars)
-
         self.beta1 = self.__beta1()
+
 
 
     def __beta1(self):
         '''
-            # Beta1 (whitney stress block)
+        Beta1 (whitney stress block)
         '''
         if self.fc <= 280:
             beta1 = 0.85
@@ -71,12 +66,12 @@ class Configuracoes:
         steel_moments = 0
         for rebar in self.rebars :
             # multiplying the stress in each layer by the area in each layer.
-            strain, stress = self.steel_strain_stress_at_depth(neutral_axis_depth, rebar["coord_y"])
+            strain, stress = self.steel_strain_stress_at_depth(neutral_axis_depth, rebar["coord"][1])
             steel_axial_forces += stress * rebar['area']
-            steel_moments += stress * rebar['area'] * rebar["coord_y"]
+            steel_moments += stress * rebar['area'] * rebar["coord"][1]
             
             # 混凝土壓力區內之鋼筋面積        
-            if rebar["coord_y"] < a:
+            if rebar["coord"][1] < a:
                 steel_area_in_compress_area += rebar['area']
         
         concrete_axial_forces = 0.85 * self.fc * (a * self.width - steel_area_in_compress_area)
@@ -87,9 +82,10 @@ class Configuracoes:
         ecc = Mn / Pn  
         return ecc, Pn, Pu, Mn, Mu
 
+
 class Rebars:
-    def __init__(self, rebars_obj):
-        self.rebars = rebars_obj
+    def __init__(self, rebars):
+        self.rebars = rebars
         self.lowest = self.__lowest()
         self.total_area = self.__total_area()
         self.coords = self.__coords()
@@ -106,16 +102,30 @@ class Rebars:
         return [rebar["coord"] for rebar in self.rebars]   
 
 class Rec:
-    pass
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        self.area = self.width * self.height
 
+
+
+
+
+
+# -----------------------------------------------------------
 # 鋼筋資料
-# rebars = [{"area":6,"coord":( 5,  5)},
-#           {"area":6,"coord":( 5, 75)},
-#           {"area":6,"coord":(35,  5)},
-#           {"area":6,"coord":(35, 75)}]
-# rb = Rebars(rebars)
+rebars = []
+rebars.append({"area":4*3.871,"coord":(25,6.5)})
+rebars.append({"area":2*3.871,"coord":(25,40)})
+rebars.append({"area":4*3.871,"coord":(25,73.5)})
+rbs = Rebars(rebars)
 
-cfg = Configuracoes()
+# -----------------------------------------------------------
+# 斷面資料
+rc = Rec(width=50, height=80)
+
+
+cfg = Configuracoes(rbs, rc)
 nom_load = []
 ult_load = []
 nom_moment = []
@@ -123,11 +133,14 @@ ult_moment = []
 eccentricity = []
 phi_factor = []
 
-N = 20
-c_value = np.linspace(0.001, 1.5*cfg.height, N)
+
+# -----------------------------------------------------------
+N = 50
+c_value = np.linspace(0.0001, 1.5* rc.height, N)
 
 for c in c_value:
-    es, fs = cfg.steel_strain_stress_at_depth(c, cfg.height-cfg.rebars_lowest )
+    # 最大拉力鋼筋應變
+    es, fs = cfg.steel_strain_stress_at_depth(c, cfg.height-rbs.lowest)
     phi, classify =  cfg.strength_factor(es)
     ecc, Pn, Pu, Mn, Mu = cfg.forces_moments(c)
 
@@ -137,7 +150,7 @@ for c in c_value:
         nom_moment.append(round(Mn/100000))
         ult_moment.append(round(Mu/100000))
         eccentricity.append(round(ecc))
-        phi_factor.append(round(phi,2))
+        phi_factor.append(round(phi))
 
 dict = {"ecc": eccentricity,
         "Pn": nom_load,
@@ -146,8 +159,9 @@ dict = {"ecc": eccentricity,
         "Mu": ult_moment}
 
 df = pd.DataFrame(dict)
-
 print(df)
+
+# -----------------------------------------------------------
 
 # sns.set_style("darkgrid")
 # fig, ax = plt.subplots(figsize=(13,7))
@@ -159,23 +173,18 @@ print(df)
 # plt.show()
 
 
-
-plt.figure() 
+# -----------------------------------------------------------
+plt.figure()
  
 lines1 = plt.plot(df["Mn"], df["Pn"])
 lines2 = plt.plot(df["Mu"], df["Pu"])
+plt.setp(lines1, linestyle='--' , marker='.')
+plt.setp(lines2, linestyle='-',  )
 
 plt.xlim(0)
-plt.title("P-M Interation Diagra")
+plt.title("P-M Interation Diagram")
 plt.xlabel("Mn (tf-m)")
 plt.ylabel("Pn (tf)")
+plt.legend(["Nominal strength","Design strength"]) 
 plt.grid(True)
-
-plt.setp(lines1, linestyle='-' , marker='.')
-plt.setp(lines2, linestyle='--', marker='x')
 plt.show()
-
- 
-# print(rb.total_area)
-# print(rb.lowest)
-# print(rb.coords)

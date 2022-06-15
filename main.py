@@ -1,87 +1,40 @@
-import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
+from sympy import Point, Polygon, Ray
 
-class Configuracoes:
-    def __init__(self, Rebars, Rec):
-        self.width = Rec.width       # cm
-        self.height = Rec.height     # cm
-        self.rebars = Rebars.rebars
 
-        self.fc = 280
-        self.fy = 4200
+class RcMaterial:
+    def __init__(self,fc, fy):
+ 
+        self.fc = fc
+        self.fy = fy
         self.ec_max = 0.003                     # concrete maximum strain (Constant)
         self.es_min = 0.005                     # 受拉鋼筋之淨拉應變
-        self.Ec = 15000 * self.fc ** 0.5
+        self.Ec = 15000 * self.fc ** 0.5        # concrete modulus (kgf/cm2)
         self.Es = 2.04 * 10 ** 6                # steel modulus (kgf/cm2)
         self.ey = self.fy / self.Es             # steel strain at yield point
         self.beta1 = self.__beta1()
 
-
-
     def __beta1(self):
-        '''
-        Beta1 (whitney stress block)
-        '''
         if self.fc <= 280:
             beta1 = 0.85
         else:
             beta1 = max(0.85 - 0.05 * ((self.fc - 280) / 70), 0.65)
         return beta1
 
+    def sigma_s(self, epsilon_s: float):
+        # 拉力為正；壓力為負
+        if epsilon_s > 0:
+            return min(epsilon_s * self.Es, +self.fy)
+        else:
+            return max(epsilon_s * self.Es, -self.fy)
+
     def steel_strain_stress_at_depth(self, neutral_axis_depth, depth_of_interest):
         # 拉力為正；壓力為負
         strain = -self.ec_max/neutral_axis_depth * (neutral_axis_depth - depth_of_interest)
-        if strain > 0:
-            stress = min(strain * self.Es, +self.fy)
-        else:
-            stress = max(strain * self.Es, -self.fy)
+        stress = self.sigma_s(strain)
         return strain, stress
-
-    def strength_factor(self, epsilon_t, is_spiral = False):
-        '''
-        # Strength reduction factor
-        '''
-        # 橫箍筋 0.65 ；螺箍筋 0.7 
-        phi = 0.65 if is_spiral == False else 0.7
-        epsilon_y = self.fy / self.Es
-        if epsilon_t >= 0.005:
-            phi, classify = 0.9, "Tension-controlled"
-        elif epsilon_t <= epsilon_y:
-            phi, classify = phi, "Compression-controlled"
-        else:
-            phi_factor = phi + 0.25 * (epsilon_t - self.ey) / (0.005 - self.ey)
-            phi, classify = phi_factor, "Transition"    
-        return phi, classify
-
-    def forces_moments(self, neutral_axis_depth):
-        
-        a = self.beta1 * neutral_axis_depth
-
-        # area_sic : area of steel rebar in concrete compress area
-        steel_area_in_compress_area = 0
-        steel_axial_forces = 0
-        steel_moments = 0
-        for rebar in self.rebars :
-            # multiplying the stress in each layer by the area in each layer.
-            strain, stress = self.steel_strain_stress_at_depth(neutral_axis_depth, rebar["coord"][1])
-            steel_axial_forces += stress * rebar['area']
-            steel_moments += stress * rebar['area'] * rebar["coord"][1]
-            
-            # 混凝土壓力區內之鋼筋面積        
-            if rebar["coord"][1] < a:
-                steel_area_in_compress_area += rebar['area']
-        
-        concrete_axial_forces = 0.85 * self.fc * (a * self.width - steel_area_in_compress_area)
-        Pn = concrete_axial_forces - steel_axial_forces
-        Mn = -concrete_axial_forces * a / 2 + steel_moments + Pn*self.height/2
-        Pu = phi * Pn
-        Mu = phi * Mn
-        ecc = Mn / Pn  
-        return ecc, Pn, Pu, Mn, Mu
-
 
 class Rebars:
     def __init__(self, rebars):
@@ -106,28 +59,92 @@ class Rec:
         self.width = width
         self.height = height
         self.area = self.width * self.height
-
-
-
-
-
-
+    
+    def get_coordinate(self):
+        pass
 # -----------------------------------------------------------
 # 鋼筋資料
 rebars = []
-rebars.append({"area":4*3.871,"coord":(25,6.5)})
-rebars.append({"area":2*3.871,"coord":(25,40)})
-rebars.append({"area":4*3.871,"coord":(25,73.5)})
+rebars.append({"area":3*5.067,"coord":(15,6.5)})
+rebars.append({"area":0*5.067,"coord":(15,40)})
+rebars.append({"area":3*5.067,"coord":(15,43.5)})
 rbs = Rebars(rebars)
 
 # -----------------------------------------------------------
-# 斷面資料
-rc = Rec(width=50, height=80)
+# 斷面資料 unit:cm
+sec = Rec(width=30, height=50)
 
+# -----------------------------------------------------------
+# 斷面資料 unit:cm
 
-cfg = Configuracoes(rbs, rc)
-nom_load = []
-ult_load = []
+mat = RcMaterial(fc = 280, fy = 4200)
+
+def forces_moments(neutral_axis_depth):
+    
+    a = mat.beta1 * neutral_axis_depth
+    # area_sic : area of steel rebar in concrete compress area
+    steel_area_in_compress_area = 0
+    steel_axial_forces = 0
+    steel_moments = 0
+    for rebar in rbs.rebars :
+        # multiplying the stress in each layer by the area in each layer.
+        strain, stress = mat.steel_strain_stress_at_depth(neutral_axis_depth, rebar["coord"][1])
+        steel_axial_forces += stress * rebar['area']
+        steel_moments += stress * rebar['area'] * rebar["coord"][1]
+        
+        # 混凝土壓力區內之鋼筋面積        
+        if rebar["coord"][1] < a:
+            steel_area_in_compress_area += rebar['area']
+    
+    concrete_axial_forces = 0.85 * mat.fc * (a * sec.width - steel_area_in_compress_area)
+    Pn = concrete_axial_forces - steel_axial_forces
+    Mn = -concrete_axial_forces * a / 2 + steel_moments + Pn*sec.height/2
+    Pu = phi * Pn
+    Mu = phi * Mn
+    ecc = Mn / Pn  
+    return ecc, Pn, Pu, Mn, Mu
+
+def strength_reduction_factor(epsilon_t, is_spiral = False):
+    '''
+    Strength reduction factor
+    橫箍筋 0.65 ; 螺箍筋 0.70 
+    '''
+    phi = 0.7 if is_spiral == True else 0.65
+    phi_factor = phi + 0.25 * (epsilon_t - mat.ey) / (0.005 - mat.ey)
+
+    if epsilon_t >= 0.005:
+        phi, classify = 0.9, "Tension-controlled"
+    elif epsilon_t <= mat.ey:
+        phi, classify = phi, "Compression-controlled"
+    else:
+        phi, classify = phi_factor, "Transition"    
+    return phi, classify
+
+def PM_curve_intersection(y_p0, x_m0, *curve_points):
+
+    origin_point = Point(0, 0)
+    check_point = Point(x_m0, y_p0)
+    
+    # 過原點直線
+    ry = Ray(origin_point, check_point)
+    poly = Polygon(*curve_points)
+    
+    # 找交點
+    Segments = poly.sides
+    for Segment in Segments:
+        cross_point = ry.intersection(Segment)
+        if len(cross_point) == 1:
+            break    
+    x_mi = cross_point[0].x.evalf()
+    y_pi = cross_point[0].y.evalf()
+    
+    # 求安全係數
+    FS_ratio = (cross_point[0].distance(origin_point) / check_point.distance(origin_point)).evalf()
+    
+    return y_pi, x_mi, FS_ratio
+
+nom_Axial_load = []
+ult_Axial_load = []
 nom_moment = []
 ult_moment = []
 eccentricity = []
@@ -135,33 +152,41 @@ phi_factor = []
 
 
 # -----------------------------------------------------------
-N = 50
-c_value = np.linspace(0.0001, 1.5* rc.height, N)
+NUM = 50
+c_value = np.linspace(0.0001, 1.5* sec.height, NUM)
+
+
+# Pure Compression
+# alfa: 橫箍筋 0.80 ; 螺箍筋 0.85 
+alfa = 0.8
+p0 = (0.85*mat.fc*(sec.area-rbs.total_area)+rbs.total_area*mat.fy)
+pn = alfa*0.65*p0
+print(f"pn = {pn/1000:.2f} tf")
 
 for c in c_value:
     # 最大拉力鋼筋應變
-    es, fs = cfg.steel_strain_stress_at_depth(c, cfg.height-rbs.lowest)
-    phi, classify =  cfg.strength_factor(es)
-    ecc, Pn, Pu, Mn, Mu = cfg.forces_moments(c)
+    ept, fs = mat.steel_strain_stress_at_depth(c, sec.height-rbs.lowest)
+    phi, classify =  strength_reduction_factor(ept)
+    ecc, Pn, Pu, Mn, Mu = forces_moments(c)
 
-    if ecc <= 1.5 * cfg.height:
-        nom_load.append(round(Pn/1000))
-        ult_load.append(round(Pu/1000))
-        nom_moment.append(round(Mn/100000))
-        ult_moment.append(round(Mu/100000))
-        eccentricity.append(round(ecc))
-        phi_factor.append(round(phi))
+    if ecc <= 1.5 * sec.height:
+        # 轉換單位為 t-m
+        nom_Axial_load.append(Pn/1000)
+        ult_Axial_load.append(Pu/1000)
+        nom_moment.append(Mn/100000)
+        ult_moment.append(Mu/100000)
+        eccentricity.append(ecc)
+        phi_factor.append(phi)
 
 dict = {"ecc": eccentricity,
-        "Pn": nom_load,
-        "Pu": ult_load,
+        "Pn": nom_Axial_load,
+        "Pu": ult_Axial_load,
         "Mn": nom_moment,
         "Mu": ult_moment}
 
-df = pd.DataFrame(dict)
-print(df)
 
-# -----------------------------------------------------------
+df = pd.DataFrame(dict)
+
 
 # sns.set_style("darkgrid")
 # fig, ax = plt.subplots(figsize=(13,7))
@@ -183,8 +208,9 @@ plt.setp(lines2, linestyle='-',  )
 
 plt.xlim(0)
 plt.title("P-M Interation Diagram")
-plt.xlabel("Mn (tf-m)")
-plt.ylabel("Pn (tf)")
+plt.xlabel("M (tf-m)")
+plt.ylabel("P (tf)")
 plt.legend(["Nominal strength","Design strength"]) 
 plt.grid(True)
 plt.show()
+

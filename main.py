@@ -188,16 +188,6 @@ dict = {"ecc": eccentricity,
 df = pd.DataFrame(dict)
 
 
-# sns.set_style("darkgrid")
-# fig, ax = plt.subplots(figsize=(13,7))
-# ax = sns.scatterplot(x= "Mn", y= "Pn" , data =df, color="g", label="Normal")
-# sns.scatterplot(x= "Mu", y= "Pu" , data =df, color="r", label="Ultimate")
-# ax.set_xlabel("Moment Mn")
-# ax.set_ylabel("Axial Load Pn")
-# plt.title("P-M Interation Diagram")
-# plt.show()
-
-
 # -----------------------------------------------------------
 plt.figure()
  

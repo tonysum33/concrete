@@ -75,9 +75,14 @@ rbs = Rebars(rebars)
 sec = Rec(width=30, height=50)
 
 # -----------------------------------------------------------
-# 斷面資料 unit:cm
-
+# 材料資料 unit:cm
 mat = RcMaterial(fc = 280, fy = 4200)
+
+# -----------------------------------------------------------
+# 外力資料 unit:t-m
+pu0 = 80.0
+mu0 = 10.0
+
 
 def forces_moments(neutral_axis_depth):
     
@@ -120,7 +125,7 @@ def strength_reduction_factor(epsilon_t, is_spiral = False):
         phi, classify = phi_factor, "Transition"    
     return phi, classify
 
-def PM_curve_intersection(y_p0, x_m0, *curve_points):
+def find_PMcurve_intersection(y_p0, x_m0, *curve_points):
 
     origin_point = Point(0, 0)
     check_point = Point(x_m0, y_p0)
@@ -139,7 +144,10 @@ def PM_curve_intersection(y_p0, x_m0, *curve_points):
     y_pi = cross_point[0].y.evalf()
     
     # 求安全係數
-    FS_ratio = (cross_point[0].distance(origin_point) / check_point.distance(origin_point)).evalf()
+
+    dist_d = check_point.distance(origin_point)
+    dist_c = cross_point[0].distance(origin_point)
+    FS_ratio = ( dist_d / dist_c).evalf()
     
     return y_pi, x_mi, FS_ratio
 
@@ -150,11 +158,9 @@ ult_moment = []
 eccentricity = []
 phi_factor = []
 
-
 # -----------------------------------------------------------
 NUM = 50
 c_value = np.linspace(0.0001, 1.5* sec.height, NUM)
-
 
 # Pure Compression
 # alfa: 橫箍筋 0.80 ; 螺箍筋 0.85 
@@ -163,6 +169,7 @@ p0 = (0.85*mat.fc*(sec.area-rbs.total_area)+rbs.total_area*mat.fy)
 pn = alfa*0.65*p0
 print(f"pn = {pn/1000:.2f} tf")
 
+PM_curve_points = []
 for c in c_value:
     # 最大拉力鋼筋應變
     ept, fs = mat.steel_strain_stress_at_depth(c, sec.height-rbs.lowest)
@@ -177,6 +184,7 @@ for c in c_value:
         ult_moment.append(Mu/100000)
         eccentricity.append(ecc)
         phi_factor.append(phi)
+        PM_curve_points.append(Point(Mn/100000, Pn/1000))
 
 dict = {"ecc": eccentricity,
         "Pn": nom_Axial_load,
@@ -184,17 +192,20 @@ dict = {"ecc": eccentricity,
         "Mn": nom_moment,
         "Mu": ult_moment}
 
-
 df = pd.DataFrame(dict)
 
+# 求求交點
+pi, mi, fs = find_PMcurve_intersection(pu0, mu0, *PM_curve_points)
+print(f'P  = {pi} tf')
+print(f'M  = {mi} tf-m')
+print(f'FS = {fs}')
 
 # -----------------------------------------------------------
 plt.figure()
- 
-lines1 = plt.plot(df["Mn"], df["Pn"])
-lines2 = plt.plot(df["Mu"], df["Pu"])
-plt.setp(lines1, linestyle='--' , marker='.')
-plt.setp(lines2, linestyle='-',  )
+
+plt.plot(df["Mn"], df["Pn"], linestyle='--' , marker='.')
+plt.plot(df["Mu"], df["Pu"], linestyle='-',)
+plt.plot(mu0,pu0,'bx')
 
 plt.xlim(0)
 plt.title("P-M Interation Diagram")
@@ -203,4 +214,3 @@ plt.ylabel("P (tf)")
 plt.legend(["Nominal strength","Design strength"]) 
 plt.grid(True)
 plt.show()
-

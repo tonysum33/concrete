@@ -54,7 +54,7 @@ class Rebars:
     def __coords(self):
         return [rebar["coord"] for rebar in self.rebars]   
 
-class Rec:
+class RectangleSec:
     def __init__(self, width, height):
         self.width = width
         self.height = height
@@ -65,14 +65,14 @@ class Rec:
 # -----------------------------------------------------------
 # 鋼筋資料
 rebars = []
-rebars.append({"area":3*5.067,"coord":(15,6.5)})
-rebars.append({"area":0*5.067,"coord":(15,40)})
-rebars.append({"area":3*5.067,"coord":(15,43.5)})
+rebars.append({"area":0*1.986,"coord":(15, 6)})
+rebars.append({"area":0*2.865,"coord":(15,40)})
+rebars.append({"area":4*6.469,"coord":(15,45)})
 rbs = Rebars(rebars)
 
 # -----------------------------------------------------------
 # 斷面資料 unit:cm
-sec = Rec(width=30, height=50)
+rec = RectangleSec(width=30, height=50)
 
 # -----------------------------------------------------------
 # 材料資料 unit:cm
@@ -80,8 +80,8 @@ mat = RcMaterial(fc = 280, fy = 4200)
 
 # -----------------------------------------------------------
 # 外力資料 unit:t-m
-pu0 = 80.0
-mu0 = 10.0
+pu0 =  0.0
+mu0 = 10
 
 
 def forces_moments(neutral_axis_depth):
@@ -101,13 +101,13 @@ def forces_moments(neutral_axis_depth):
         if rebar["coord"][1] < a:
             steel_area_in_compress_area += rebar['area']
     
-    concrete_axial_forces = 0.85 * mat.fc * (a * sec.width - steel_area_in_compress_area)
+    concrete_axial_forces = 0.85 * mat.fc * (a * rec.width - steel_area_in_compress_area)
     Pn = concrete_axial_forces - steel_axial_forces
-    Mn = -concrete_axial_forces * a / 2 + steel_moments + Pn*sec.height/2
-    Pu = phi * Pn
-    Mu = phi * Mn
+    Mn = -concrete_axial_forces * a / 2 + steel_moments + Pn*rec.height/2
+    phi_Pn = phi * Pn
+    phi_Mn = phi * Mn
     ecc = Mn / Pn  
-    return ecc, Pn, Pu, Mn, Mu
+    return ecc, Pn, phi_Pn, Mn, phi_Mn
 
 def strength_reduction_factor(epsilon_t, is_spiral = False):
     '''
@@ -118,14 +118,14 @@ def strength_reduction_factor(epsilon_t, is_spiral = False):
     phi_factor = phi + 0.25 * (epsilon_t - mat.ey) / (0.005 - mat.ey)
 
     if epsilon_t >= 0.005:
-        phi, classify = 0.9, "Tension-controlled"
+        phi, classify = 0.9, "Tens."
     elif epsilon_t <= mat.ey:
-        phi, classify = phi, "Compression-controlled"
+        phi, classify = phi, "Comp."
     else:
-        phi, classify = phi_factor, "Transition"    
+        phi, classify = phi_factor, "Tran."    
     return phi, classify
 
-def find_PMcurve_intersection(y_p0, x_m0, *curve_points):
+def pm_curve_intersection(y_p0, x_m0, *curve_points):
 
     origin_point = Point(0, 0)
     check_point = Point(x_m0, y_p0)
@@ -144,68 +144,84 @@ def find_PMcurve_intersection(y_p0, x_m0, *curve_points):
     y_pi = cross_point[0].y.evalf()
     
     # 求安全係數
-
-    dist_d = check_point.distance(origin_point)
-    dist_c = cross_point[0].distance(origin_point)
-    FS_ratio = ( dist_d / dist_c).evalf()
+    demand = check_point.distance(origin_point)
+    capacity = cross_point[0].distance(origin_point)
+    fs = (demand/capacity).evalf()
     
-    return y_pi, x_mi, FS_ratio
+    return y_pi, x_mi, fs
+
 
 nom_Axial_load = []
-ult_Axial_load = []
+phi_Axial_load = []
 nom_moment = []
-ult_moment = []
+phi_moment = []
 eccentricity = []
 phi_factor = []
+epsilon_t = []
+ci = []
+ctrl =[]
 
 # -----------------------------------------------------------
 NUM = 50
-c_value = np.linspace(0.0001, 1.5* sec.height, NUM)
+c_value = np.linspace(0.00001, 1.3* rec.height, NUM)
+
 
 # Pure Compression
 # alfa: 橫箍筋 0.80 ; 螺箍筋 0.85 
-alfa = 0.8
-p0 = (0.85*mat.fc*(sec.area-rbs.total_area)+rbs.total_area*mat.fy)
-pn = alfa*0.65*p0
-print(f"pn = {pn/1000:.2f} tf")
+# alfa = 0.8
+# p0 = (0.85*mat.fc*(rec.area-rbs.total_area)+rbs.total_area*mat.fy)
+# pn = alfa*0.65*p0
 
 PM_curve_points = []
 for c in c_value:
     # 最大拉力鋼筋應變
-    ept, fs = mat.steel_strain_stress_at_depth(c, sec.height-rbs.lowest)
+    ept, fs = mat.steel_strain_stress_at_depth(c, rec.height-rbs.lowest)
     phi, classify =  strength_reduction_factor(ept)
-    ecc, Pn, Pu, Mn, Mu = forces_moments(c)
+    ecc, Pn, phi_Pn, Mn, phi_Mn = forces_moments(c)
 
-    if ecc <= 1.5 * sec.height:
-        # 轉換單位為 t-m
-        nom_Axial_load.append(Pn/1000)
-        ult_Axial_load.append(Pu/1000)
-        nom_moment.append(Mn/100000)
-        ult_moment.append(Mu/100000)
-        eccentricity.append(ecc)
-        phi_factor.append(phi)
-        PM_curve_points.append(Point(Mn/100000, Pn/1000))
+    nom_Axial_load.append(Pn/1000)
+    phi_Axial_load.append(phi_Pn/1000)
+    nom_moment.append(Mn/100000)
+    phi_moment.append(phi_Mn/100000)
+    eccentricity.append(ecc)
+    phi_factor.append(phi)
+    ci.append(c)
+    epsilon_t.append(ept)
+    ctrl.append(classify)
+    PM_curve_points.append(Point(phi_Mn/100000, phi_Pn/1000))
 
-dict = {"ecc": eccentricity,
-        "Pn": nom_Axial_load,
-        "Pu": ult_Axial_load,
+dict = {"Pn": nom_Axial_load,
         "Mn": nom_moment,
-        "Mu": ult_moment}
+        "phi": phi_factor,
+        "phiPn": phi_Axial_load,
+        "phiMn": phi_moment,
+        "ecc": eccentricity,
+        "c": ci,
+        "ept": epsilon_t,
+        "ctrl": ctrl}
 
 df = pd.DataFrame(dict)
 
+output = df.to_string(formatters={
+    'ept': '{:,.4f}'.format,
+    'c': '{:,.3f}'.format,
+    'ecc': '{:,.3f}'.format,
+    'phi': '{:,.3f}'.format,
+})
+print(output)
+
 # 求求交點
-pi, mi, fs = find_PMcurve_intersection(pu0, mu0, *PM_curve_points)
-print(f'P  = {pi} tf')
-print(f'M  = {mi} tf-m')
+phi_pi, phi_mi, fs = pm_curve_intersection(pu0, mu0, *PM_curve_points)
+print(f'phi_Pn  = {phi_pi} tf')
+print(f'phi_Mn  = {phi_mi} tf-m')
 print(f'FS = {fs}')
 
 # -----------------------------------------------------------
 plt.figure()
 
-plt.plot(df["Mn"], df["Pn"], linestyle='--' , marker='.')
-plt.plot(df["Mu"], df["Pu"], linestyle='-',)
-plt.plot(mu0,pu0,'bx')
+plt.plot(df["Mn"], df["Pn"],linestyle='-' , marker='.')
+plt.plot(df["phiMn"], df["phiPn"], linestyle='--')
+plt.plot(mu0,pu0,'rx')
 
 plt.xlim(0)
 plt.title("P-M Interation Diagram")
@@ -214,3 +230,4 @@ plt.ylabel("P (tf)")
 plt.legend(["Nominal strength","Design strength"]) 
 plt.grid(True)
 plt.show()
+

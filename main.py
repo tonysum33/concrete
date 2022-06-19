@@ -4,16 +4,15 @@ import matplotlib.pyplot as plt
 from sympy import Point, Polygon, Ray
 
 
+
 class RcMaterial:
     def __init__(self,fc, fy):
- 
         self.fc = fc
         self.fy = fy
-        self.ec_max = 0.003                     # concrete maximum strain (Constant)
-        self.es_min = 0.005                     # 受拉鋼筋之淨拉應變
         self.Ec = 15000 * self.fc ** 0.5        # concrete modulus (kgf/cm2)
         self.Es = 2.04 * 10 ** 6                # steel modulus (kgf/cm2)
-        self.ey = self.fy / self.Es             # steel strain at yield point
+        self.eps_cu = 0.003                     # concrete maximum strain (Constant)
+        self.eps_yt = self.fy / self.Es         # steel strain at yield point
         self.beta1 = self.__beta1()
 
     def __beta1(self):
@@ -23,16 +22,16 @@ class RcMaterial:
             beta1 = max(0.85 - 0.05 * ((self.fc - 280) / 70), 0.65)
         return beta1
 
-    def sigma_s(self, epsilon_s: float):
+    def sigma_s(self, eps_y: float):
         # 拉力為正；壓力為負
-        if epsilon_s > 0:
-            return min(epsilon_s * self.Es, +self.fy)
+        if eps_y > 0:
+            return min(eps_y * self.Es, +self.fy)
         else:
-            return max(epsilon_s * self.Es, -self.fy)
+            return max(eps_y * self.Es, -self.fy)
 
     def steel_strain_stress_at_depth(self, neutral_axis_depth, depth_of_interest):
         # 拉力為正；壓力為負
-        strain = -self.ec_max/neutral_axis_depth * (neutral_axis_depth - depth_of_interest)
+        strain = -self.eps_cu/neutral_axis_depth * (neutral_axis_depth - depth_of_interest)
         stress = self.sigma_s(strain)
         return strain, stress
 
@@ -54,25 +53,61 @@ class Rebars:
     def __coords(self):
         return [rebar["coord"] for rebar in self.rebars]   
 
+    def rA(barSize): 
+        '''
+        鋼筋斷面積 cm2
+        '''
+        rA = 0
+        if barSize == 10: rA =  0.7133
+        if barSize == 13: rA =  1.267
+        if barSize == 16: rA =  1.986
+        if barSize == 19: rA =  2.865
+        if barSize == 22: rA =  3.871
+        if barSize == 25: rA =  5.067
+        if barSize == 29: rA =  6.469
+        if barSize == 32: rA =  8.143
+        if barSize == 36: rA = 10.07
+        if barSize == 39: rA = 12.19
+        if barSize == 43: rA = 14.52
+        if barSize == 57: rA = 25.79
+        return rA
+
+
 class RectangleSec:
     def __init__(self, width, height):
         self.width = width
         self.height = height
         self.area = self.width * self.height
+        self.coordinate = self.__coordinate()
+
+    def __coordinate(self):
+        p1 = (-self.width/2,-self.height/2)
+        p2 = (+self.width/2,-self.height/2)
+        p3 = (+self.width/2,+self.height/2)
+        p4 = (-self.width/2,+self.height/2)
+        return [p1, p2, p3, p4]
+
+    def Ix(self):
+        return 1/12 * self.width * self.height**3  
     
-    def get_coordinate(self):
-        pass
-# -----------------------------------------------------------
-# 鋼筋資料
-rebars = []
-rebars.append({"area":0*1.986,"coord":(15, 6)})
-rebars.append({"area":0*2.865,"coord":(15,40)})
-rebars.append({"area":4*6.469,"coord":(15,45)})
-rbs = Rebars(rebars)
+    def Iy(self):
+        return 1/12 * self.height * self.width**3   
+
+
 
 # -----------------------------------------------------------
 # 斷面資料 unit:cm
-rec = RectangleSec(width=30, height=50)
+rec = RectangleSec(width=50, height=80)
+
+# -----------------------------------------------------------
+# 鋼筋資料
+# 以斷面形心為原點中心 
+rebars = []
+rebars.append({"area":4*Rebars.rA(29),"coord":(25,35)})
+rebars.append({"area":0*Rebars.rA(29),"coord":(25,0)})
+rebars.append({"area":4*Rebars.rA(29),"coord":(25,-35)})
+rbs = Rebars(rebars)
+
 
 # -----------------------------------------------------------
 # 材料資料 unit:cm
@@ -80,8 +115,8 @@ mat = RcMaterial(fc = 280, fy = 4200)
 
 # -----------------------------------------------------------
 # 外力資料 unit:t-m
-pu0 =  0.0
-mu0 = 10
+pu0 = 0.0
+mu0 = 1.0
 
 
 def forces_moments(neutral_axis_depth):
@@ -93,12 +128,13 @@ def forces_moments(neutral_axis_depth):
     steel_moments = 0
     for rebar in rbs.rebars :
         # multiplying the stress in each layer by the area in each layer.
-        strain, stress = mat.steel_strain_stress_at_depth(neutral_axis_depth, rebar["coord"][1])
+        steel_at_depth = rec.height/2 - rebar["coord"][1]
+        strain, stress = mat.steel_strain_stress_at_depth(neutral_axis_depth, steel_at_depth)
         steel_axial_forces += stress * rebar['area']
-        steel_moments += stress * rebar['area'] * rebar["coord"][1]
+        steel_moments += stress * rebar['area'] * steel_at_depth
         
         # 混凝土壓力區內之鋼筋面積        
-        if rebar["coord"][1] < a:
+        if steel_at_depth < a:
             steel_area_in_compress_area += rebar['area']
     
     concrete_axial_forces = 0.85 * mat.fc * (a * rec.width - steel_area_in_compress_area)
@@ -115,11 +151,11 @@ def strength_reduction_factor(epsilon_t, is_spiral = False):
     橫箍筋 0.65 ; 螺箍筋 0.70 
     '''
     phi = 0.7 if is_spiral == True else 0.65
-    phi_factor = phi + 0.25 * (epsilon_t - mat.ey) / (0.005 - mat.ey)
+    phi_factor = phi + 0.25 * (epsilon_t - mat.eps_yt) / (0.005 - mat.eps_yt)
 
     if epsilon_t >= 0.005:
         phi, classify = 0.9, "Tens."
-    elif epsilon_t <= mat.ey:
+    elif epsilon_t <= mat.eps_yt:
         phi, classify = phi, "Comp."
     else:
         phi, classify = phi_factor, "Tran."    
@@ -150,7 +186,6 @@ def pm_curve_intersection(y_p0, x_m0, *curve_points):
     
     return y_pi, x_mi, fs
 
-
 nom_Axial_load = []
 phi_Axial_load = []
 nom_moment = []
@@ -158,24 +193,26 @@ phi_moment = []
 eccentricity = []
 phi_factor = []
 epsilon_t = []
-ci = []
-ctrl =[]
+neutral_axis_depth = []
+control_type =[]
 
 # -----------------------------------------------------------
-NUM = 50
-c_value = np.linspace(0.00001, 1.3* rec.height, NUM)
+NUM = 20
+c_value = np.linspace(0.00001, 1.2* rec.height, NUM)
 
 
 # Pure Compression
-# alfa: 橫箍筋 0.80 ; 螺箍筋 0.85 
-# alfa = 0.8
-# p0 = (0.85*mat.fc*(rec.area-rbs.total_area)+rbs.total_area*mat.fy)
-# pn = alfa*0.65*p0
+# Nominal axial compressive strength at zero eccentricity 
+p0 = 0.85*mat.fc*(rec.area-rbs.total_area)+rbs.total_area*mat.fy
+phi_p0 = 0.8*0.65*p0
+
+
+
 
 PM_curve_points = []
 for c in c_value:
     # 最大拉力鋼筋應變
-    ept, fs = mat.steel_strain_stress_at_depth(c, rec.height-rbs.lowest)
+    ept, fs = mat.steel_strain_stress_at_depth(c, rec.height/2-rbs.lowest)
     phi, classify =  strength_reduction_factor(ept)
     ecc, Pn, phi_Pn, Mn, phi_Mn = forces_moments(c)
 
@@ -185,26 +222,28 @@ for c in c_value:
     phi_moment.append(phi_Mn/100000)
     eccentricity.append(ecc)
     phi_factor.append(phi)
-    ci.append(c)
+    neutral_axis_depth.append(c)
     epsilon_t.append(ept)
-    ctrl.append(classify)
+    control_type.append(classify)
     PM_curve_points.append(Point(phi_Mn/100000, phi_Pn/1000))
 
 dict = {"Pn": nom_Axial_load,
         "Mn": nom_moment,
-        "phi": phi_factor,
         "phiPn": phi_Axial_load,
         "phiMn": phi_moment,
         "ecc": eccentricity,
-        "c": ci,
-        "ept": epsilon_t,
-        "ctrl": ctrl}
+        "NA_depth": neutral_axis_depth,
+        "eps_t": epsilon_t,
+        "cont.": control_type,
+        "phi": phi_factor,}
 
 df = pd.DataFrame(dict)
 
 output = df.to_string(formatters={
-    'ept': '{:,.4f}'.format,
-    'c': '{:,.3f}'.format,
+    'eps_t': '{:,.4f}'.format,
+    'Pn': '{:,.3f}'.format,
+    'Mn': '{:,.3f}'.format,
+    'NA_depth': '{:,.3f}'.format,
     'ecc': '{:,.3f}'.format,
     'phi': '{:,.3f}'.format,
 })

@@ -1,4 +1,4 @@
-# from sympy import Point, Polygon, Ray
+from sympy import Point, Polygon, Ray
 import math
 import numpy as np
 import pandas as pd
@@ -7,34 +7,37 @@ from shapely.geometry import Polygon, Point, MultiPoint,LineString
 from shapely import wkb
 from shapely import affinity, ops
 
-class RcMaterial:
+class RCMaterial:
     def __init__(self,fc, fy):
+        # Concrete
         self.fc = fc
-        self.fy = fy
         self.Ec = 15000 * self.fc ** 0.5        # concrete modulus (kgf/cm2)
-        self.Es = 2.04 * 10 ** 6                # steel modulus (kgf/cm2)
         self.eps_cu = 0.003                     # concrete maximum strain (Constant)
+        self.beta1 = self.__beta1()             # Whitney block reduction coefficient
+        
+        # Steel
+        self.fy = fy
+        self.Es = 2.04 * 10 ** 6                # steel modulus (kgf/cm2)
         self.eps_yt = self.fy / self.Es         # steel strain at yield point
-        self.beta1 = self.__beta1()
+    
 
     def __beta1(self):
+        
         if self.fc <= 280:
-            beta1 = 0.85
+            return 0.85
         else:
-            beta1 = max(0.85 - 0.05 * ((self.fc - 280) / 70), 0.65)
-        return beta1
+            return max(0.85 - 0.05 * ((self.fc - 280) / 70), 0.65)
 
-    def sigma_s(self, eps_y: float):
-        # 拉力為正；壓力為負
-        if eps_y > 0:
-            return min(eps_y * self.Es, +self.fy)
+    def steel_stress(self, eps_s: float):
+        if eps_s > 0:
+            return min(eps_s * self.Es, +self.fy)
         else:
-            return max(eps_y * self.Es, -self.fy)
+            return max(eps_s * self.Es, -self.fy)
 
     def steel_strain_stress_at_depth(self, neutral_axis_depth, depth_of_interest):
-        # 拉力為正；壓力為負
-        strain = -self.eps_cu/neutral_axis_depth * (neutral_axis_depth - depth_of_interest)
-        stress = self.sigma_s(strain)
+        # 拉力為負；壓力為正
+        strain = self.eps_cu/neutral_axis_depth * (neutral_axis_depth - depth_of_interest)
+        stress = self.steel_stress(strain)
         return strain, stress
 
 class Rebars:
@@ -89,12 +92,6 @@ class RectangleSec:
         p4 = (-self.width/2,+self.height/2)
         return [p1, p2, p3, p4]
 
-    def Ix(self):
-        return 1/12 * self.width * self.height**3  
-    
-    def Iy(self):
-        return 1/12 * self.height * self.width**3   
-
 
 
 
@@ -134,10 +131,12 @@ def computed_capacity_force(poly, neutral_axis_depth):
     # Yi  = strained fiber at level i
     # Ymax  = maximum compressive fiber
     # Y0  = “zero” strain fiber in cross-section
-    y0 = poly_ymax - c
+    y0 = poly_ymax - neutral_axis_depth
 
-    rbs_df["epsilon_s"] = mat.eps_cu / c * (rbs_df["Yri"] - y0)
-    rbs_df["sigma_s"] = [mat.sigma_s(i) for i in rbs_df["epsilon_s"]]
+    rbs_df["epsilon_s"] = mat.eps_cu / neutral_axis_depth * (rbs_df["Yri"] - y0)
+    rbs_df["sigma_s"] = [mat.steel_stress(i) for i in rbs_df["epsilon_s"]]
+
+
 
     dfc = []
     for _ in rbs_df["epsilon_s"]:
@@ -159,9 +158,9 @@ def computed_capacity_force(poly, neutral_axis_depth):
     Mnx = (Mcx + Msx) * math.cos(-angle_deg * math.pi/180) + \
           (Mcy + Msy) * math.sin(-angle_deg * math.pi/180)
     Mny = -(Mcx + Msx) * math.sin(-angle_deg * math.pi/180) + \
-        (Mcy + Msy) * math.cos(-angle_deg * math.pi/180)
-    
-    return Pn, Mnx, Mny 
+           (Mcy + Msy) * math.cos(-angle_deg * math.pi/180)
+
+    return Pn, Mnx, Mny
 
 def forces_moments(neutral_axis_depth):
     
@@ -189,20 +188,19 @@ def forces_moments(neutral_axis_depth):
     ecc = Mn / Pn  
     return ecc, Pn, phi_Pn, Mn, phi_Mn
 
-def strength_reduction_factor(epsilon_t, is_spiral = False):
+def strength_reduction_factor(eps_t, phi_b, phi_c):
     '''
-    Strength reduction factor
-    橫箍筋 0.65 ; 螺箍筋 0.70 
+    phi_b  tension controlled   
+    phi_c  compression controlled 
     '''
-    phi = 0.7 if is_spiral == True else 0.65
-    phi_factor = phi + 0.25 * (epsilon_t - mat.eps_yt) / (0.005 - mat.eps_yt)
-
-    if epsilon_t >= 0.005:
-        phi, classify = 0.9, "Tens."
-    elif epsilon_t <= mat.eps_yt:
-        phi, classify = phi, "Comp."
+    eps_t = abs(eps_t)
+    factor = phi_c + 0.25 * (eps_t - mat.eps_yt) / (0.005 - mat.eps_yt)
+    if eps_t >= 0.005:
+        phi, classify = phi_b,  "Tens."
+    elif eps_t <= mat.eps_yt:
+        phi, classify = phi_c,  "Comp."
     else:
-        phi, classify = phi_factor, "Tran."    
+        phi, classify = factor, "Tran."    
     return phi, classify
 
 def pm_curve_intersection(y_p0, x_m0, *curve_points):
@@ -231,24 +229,25 @@ def pm_curve_intersection(y_p0, x_m0, *curve_points):
     return y_pi, x_mi, fs
 
 
+angle_deg = 180
 # -----------------------------------------------------------
 # 斷面資料 unit:cm
-rec = RectangleSec(width=50, height=80)
+rec = RectangleSec(width=30, height=50)
 rec_poly = Polygon(rec.coordinate)
 rec_df = pd.DataFrame(list(rec_poly.exterior.coords), columns=['Xi', 'Yi'])
+print(rec_poly)
 
-angle_deg = 180
 
 # --------------------------------------------------------
 # 鋼筋資料
 # 以斷面形心為原點中心 
 rebars = []
-rebars.append({"area":1*Rebars.rA(22),"coord":(-19,-34)})
-rebars.append({"area":1*Rebars.rA(22),"coord":(  0,-34)})
-rebars.append({"area":1*Rebars.rA(22),"coord":( 19,-34)})
-rebars.append({"area":1*Rebars.rA(22),"coord":(-19, 34)})
-rebars.append({"area":1*Rebars.rA(22),"coord":(  0, 34)})
-rebars.append({"area":1*Rebars.rA(22),"coord":( 19, 34)})
+rebars.append({"area":1*Rebars.rA(25),"coord":( 10,+18.5)})
+rebars.append({"area":1*Rebars.rA(25),"coord":(  0,+18.5)})
+rebars.append({"area":1*Rebars.rA(25),"coord":(-10,+18.5)})
+rebars.append({"area":1*Rebars.rA(25),"coord":( 10,-18.5)})
+rebars.append({"area":1*Rebars.rA(25),"coord":(  0,-18.5)})
+rebars.append({"area":1*Rebars.rA(25),"coord":(-10,-18.5)})
 
 rbs = Rebars(rebars)
 rebarPoints = MultiPoint(rbs.coordinate)
@@ -258,13 +257,22 @@ pt_y   = [point.y for point in rebarPoints.geoms]
 rb_a   = [rb["area"] for rb in rbs.rebars]
 rbs_df = pd.DataFrame(list(zip(pt_x,pt_y,rb_a)), columns=['Xi', 'Yi','As'])
 
+
 # -----------------------------------------------------------
 # 材料資料 unit:cm
-mat = RcMaterial(fc = 280, fy = 4200)
+mat = RCMaterial(fc = 280, fy = 4200)
+
+
+# -----------------------------------------------------------
+# capacity reduction factors
+phi_a = 0.80  # axial compression 
+phi_b = 0.90  # tension controlled   
+phi_c = 0.65  # compression controlled 
+
 
 # -----------------------------------------------------------
 # plastic-centroid for the origin of the coordinate system
-x_pc, y_pc =0, 0
+x_pc, y_pc = 0, 0
 
 
 # Concrete Coordinates and Cross-Sectional Properties
@@ -281,40 +289,70 @@ rec_df["Yri"] = rec_poly.exterior.coords.xy[1]
 rebarPoints = geometry_transform(rebarPoints, x_pc, y_pc, angle_deg)
 rbs_df["Xri"] = [point.x for point in rebarPoints.geoms]
 rbs_df["Yri"] = [point.y for point in rebarPoints.geoms]
-
-
+# 最外側拉力鋼筋距混凝土頂距離
+rbs_lowest = rec_poly.bounds[3] - rbs_df["Yri"].min() 
 
 # -----------------------------------------------------------
 # 外力資料 unit:t-m
-pu0 = 0.0
-mu0 = 1.0
+pu0 =  0.0
+mu0 = 10.0
 
 # Make PM curve   
-NUM = 30
+NUM = 50
 c_depth = rec_poly_ymax - rec_poly_ymin
-c_value = np.linspace(0.0001, 1.0 * c_depth, NUM)
+c_value = np.linspace(1.0 * c_depth,0.0001, NUM)
 
 pmCurve = []
-# 全斷面受拉
-# Pure Tension
-Pt = -rbs.total_area * mat.fy
-pmCurve.append({"Pn": Pt/1000, "Mnx": 0, "Mny": 0})
 
 for c in c_value:
-    Pn, Mnx, Mny = computed_capacity_force(rec_poly, c)
-    pmCurve.append({"Pn": Pn/1000, "Mnx":Mnx/100000, "Mny":Mny/100000})
+    eps_t, fs = mat.steel_strain_stress_at_depth(c, rbs_lowest)
+    phi, classify =  strength_reduction_factor(eps_t, phi_b, phi_c)
+    Pn, Mnx, Mny= computed_capacity_force(rec_poly, c)
+    pmCurve.append({"Pn": Pn/1000,
+                    "Mnx":Mnx/100000,
+                    "Mny":Mny/100000,
+                    "phi_Pn": phi*Pn/1000, 
+                    "phi_Mnx":phi*Mnx/100000,
+                    "phi_Mny":phi*Mny/100000,
+                    "NA_depth":c,
+                    "eps_t":eps_t,
+                    "phi": phi,})
 
 # 全斷面受壓
 # Pure Compression
-Pc = 0.85*mat.fc*(rec_poly.area-rbs.total_area) + rbs.total_area * mat.fy
-pmCurve.append({"Pn": Pc/1000, "Mnx": 0, "Mny": 0}) 
-pmCurve_df = pd.DataFrame(pmCurve , columns=["Pn", "Mnx","Mny"])
-print(pmCurve_df)
+# Pc = 0.85*mat.fc*(rec_poly.area-rbs.total_area) + rbs.total_area * mat.fy
+# pmCurve.append({"Pn": Pc/1000, "Mnx": 0, "Mny": 0}) 
+
+pmCurve_df = pd.DataFrame(pmCurve, columns=["Pn",
+                                            "Mnx",
+                                            "Mny",
+                                            "phi_Pn",
+                                            "phi_Mnx",
+                                            "phi_Mny",
+                                            "NA_depth",
+                                            "eps_t",
+                                            "phi"])
+
+
+output = pmCurve_df.to_string(formatters={
+    'eps_t': '{:,.4f}'.format,
+    'Pn':  '{:,.3f}'.format,
+    'Mnx': '{:,.3f}'.format,
+    'Mny': '{:,.3f}'.format,
+    'phi_Pn':  '{:,.3f}'.format,
+    'phi_Mnx': '{:,.3f}'.format,
+    'phi_Mny': '{:,.3f}'.format,
+    'phi': '{:,.3f}'.format,
+})
+# print(output)
+
+
 
 
 # Plot PM curve
 plt.figure() 
 plt.plot(pmCurve_df["Mnx"], pmCurve_df["Pn"],linestyle='-' , marker='.')
+plt.plot(pmCurve_df["phi_Mnx"], pmCurve_df["phi_Pn"])
 plt.plot(mu0,pu0,'rx')
 plt.title("P-M Interation Diagram")
 plt.xlabel("M (tf-m)")
@@ -322,6 +360,8 @@ plt.ylabel("P (tf)")
 plt.legend(["Nominal strength","Design strength"]) 
 plt.grid(True)
 plt.show()
+
+
 
 # ax = plt.figure().add_subplot(projection='3d')
 # x = pmCurve_df["Mnx"]
@@ -360,8 +400,8 @@ plt.show()
 # for c in c_value:
 #     # 最大拉力鋼筋應變
 #     ept, fs = mat.steel_strain_stress_at_depth(c, rec.height/2-rbs.lowest)
-#     phi, classify =  strength_reduction_factor(ept)
-#     ecc, Pn, phi_Pn, Mn, phi_Mn = forces_moments(c)
+#     
+#     ecc, Pn, phi_Pn, Mn, phi_Mn = forces_moments(c)phi, classify =  strength_reduction_factor(ept)
 
 #     nom_Axial_load.append(Pn/1000)
 #     phi_Axial_load.append(phi_Pn/1000)

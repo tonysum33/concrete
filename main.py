@@ -94,28 +94,20 @@ class RectangleSec:
 
 
 
-
 def geometry_transform(geometry, x0, y0, angle_deg):
-    # Coordinate Transformation to Centroid Origin
     geometry = affinity.translate(geometry, - x0, -y0)
-    # Coordinate Transformation to Angular Rotation
-    geometry = affinity.rotate(geometry, -angle_deg, origin=(0, 0))
+    geometry = affinity.rotate(geometry, angle_deg, origin=(0, 0))
     return geometry
 
 def computed_capacity_force(poly, neutral_axis_depth):
 
     # concrete_force
-    #
     # a = effective compressive block depth for ACI-318 concrete model
     a = mat.beta1 * neutral_axis_depth
 
-    poly_xmin = poly.bounds[0]
-    poly_ymin = poly.bounds[1]
-    poly_xmax = poly.bounds[2]
-    poly_ymax = poly.bounds[3]
+    poly_xmin, poly_ymin, poly_xmax, poly_ymax = poly.bounds
 
-    cut_line = LineString([(poly_xmin, poly_ymax - a),
-                           (poly_xmax, poly_ymax - a)])
+    cut_line = LineString([(poly_xmin, poly_ymax - a),(poly_xmax, poly_ymax - a)])
 
     cut_polys = ops.split(poly, cut_line)
     cut_poly0_ymax = cut_polys.geoms[0].bounds[3]
@@ -127,22 +119,22 @@ def computed_capacity_force(poly, neutral_axis_depth):
     Mcy = Pc * +compress_poly.centroid.x           # kgf-cm
 
     # steel_force
-    #
     # Yi  = strained fiber at level i
     # Ymax  = maximum compressive fiber
     # Y0  = “zero” strain fiber in cross-section
-    y0 = poly_ymax - neutral_axis_depth
+    Ymax = poly_ymax 
+    Y0 = Ymax - neutral_axis_depth
 
-    rbs_df["epsilon_s"] = mat.eps_cu / neutral_axis_depth * (rbs_df["Yri"] - y0)
-    rbs_df["sigma_s"] = [mat.steel_stress(i) for i in rbs_df["epsilon_s"]]
-
+    rbs_df["eps_s"] = mat.eps_cu / neutral_axis_depth * (rbs_df["Yri"] - Y0)
+    rbs_df["sigma_s"] = [mat.steel_stress(i) for i in rbs_df["eps_s"]]
 
 
     dfc = []
-    for _ in rbs_df["epsilon_s"]:
+    for _ in rbs_df["eps_s"]:
         if _ < 0:
             dfc.append(0)
         else:
+        # 扣除壓力鋼筋範圍混凝土應力    
             dfc.append(-0.85 * mat.fc)
 
     rbs_df["dfc"] = dfc
@@ -150,13 +142,13 @@ def computed_capacity_force(poly, neutral_axis_depth):
     rbs_df["Msx"] = - rbs_df["Ps"] * rbs_df["Yri"]
     rbs_df["Msy"] = + rbs_df["Ps"] * rbs_df["Xri"]
 
-    Ps = sum(rbs_df["Ps"])    # kgf
+    Ps =  sum(rbs_df["Ps"])   # kgf
     Msx = sum(rbs_df["Msx"])  # kgf-cm
     Msy = sum(rbs_df["Msy"])  # kgf-cm
 
     Pn = Pc + Ps
-    Mnx = (Mcx + Msx) * math.cos(-angle_deg * math.pi/180) + \
-          (Mcy + Msy) * math.sin(-angle_deg * math.pi/180)
+    Mnx =  (Mcx + Msx) * math.cos(-angle_deg * math.pi/180) + \
+           (Mcy + Msy) * math.sin(-angle_deg * math.pi/180)
     Mny = -(Mcx + Msx) * math.sin(-angle_deg * math.pi/180) + \
            (Mcy + Msy) * math.cos(-angle_deg * math.pi/180)
 
@@ -228,14 +220,15 @@ def pm_curve_intersection(y_p0, x_m0, *curve_points):
     
     return y_pi, x_mi, fs
 
-
+# -----------------------------------------------------------
+# 坐標軸順時針為正
 angle_deg = 180
+
 # -----------------------------------------------------------
 # 斷面資料 unit:cm
 rec = RectangleSec(width=30, height=50)
 rec_poly = Polygon(rec.coordinate)
 rec_df = pd.DataFrame(list(rec_poly.exterior.coords), columns=['Xi', 'Yi'])
-print(rec_poly)
 
 
 # --------------------------------------------------------
@@ -252,10 +245,10 @@ rebars.append({"area":1*Rebars.rA(25),"coord":(-10,-18.5)})
 rbs = Rebars(rebars)
 rebarPoints = MultiPoint(rbs.coordinate)
 
-pt_x   = [point.x for point in rebarPoints.geoms]
-pt_y   = [point.y for point in rebarPoints.geoms]
-rb_a   = [rb["area"] for rb in rbs.rebars]
-rbs_df = pd.DataFrame(list(zip(pt_x,pt_y,rb_a)), columns=['Xi', 'Yi','As'])
+_x   = [point.x for point in rebarPoints.geoms]
+_y   = [point.y for point in rebarPoints.geoms]
+_a   = [rb["area"] for rb in rbs.rebars]
+rbs_df = pd.DataFrame(list(zip(_x,_y,_a)), columns=['Xi', 'Yi','As'])
 
 
 # -----------------------------------------------------------
@@ -275,22 +268,19 @@ phi_c = 0.65  # compression controlled
 x_pc, y_pc = 0, 0
 
 
+# -----------------------------------------------------------
 # Concrete Coordinates and Cross-Sectional Properties
 rec_poly = geometry_transform(rec_poly, x_pc, y_pc, angle_deg)
-rec_poly_xmin = rec_poly.bounds[0]
-rec_poly_ymin = rec_poly.bounds[1]
-rec_poly_xmax = rec_poly.bounds[2]
-rec_poly_ymax = rec_poly.bounds[3]
+rec_poly_xmin, rec_poly_ymin, rec_poly_xmax, rec_poly_ymax = rec_poly.bounds
 rec_df["Xri"] = rec_poly.exterior.coords.xy[0]
 rec_df["Yri"] = rec_poly.exterior.coords.xy[1]
-
+print(rec_df)
 
 # Rebar Coordinates and Transformed Cross-Sectional Properties
 rebarPoints = geometry_transform(rebarPoints, x_pc, y_pc, angle_deg)
 rbs_df["Xri"] = [point.x for point in rebarPoints.geoms]
 rbs_df["Yri"] = [point.y for point in rebarPoints.geoms]
-# 最外側拉力鋼筋距混凝土頂距離
-rbs_lowest = rec_poly.bounds[3] - rbs_df["Yri"].min() 
+
 
 # -----------------------------------------------------------
 # 外力資料 unit:t-m
@@ -299,6 +289,9 @@ mu0 = 10.0
 
 # Make PM curve   
 NUM = 50
+
+# 最外側拉力鋼筋距混凝土頂距離
+rbs_lowest = rec_poly_ymax - rbs_df["Yri"].min() 
 c_depth = rec_poly_ymax - rec_poly_ymin
 c_value = np.linspace(1.0 * c_depth,0.0001, NUM)
 

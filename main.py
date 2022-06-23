@@ -102,17 +102,17 @@ def geometry_transform(geometry, x0, y0, angle_deg):
 def computed_capacity_force(poly, neutral_axis_depth):
 
     # concrete_force
-    # a = effective compressive block depth for ACI-318 concrete model
     a = mat.beta1 * neutral_axis_depth
-
     poly_xmin, poly_ymin, poly_xmax, poly_ymax = poly.bounds
 
-    cut_line = LineString([(poly_xmin, poly_ymax - a),(poly_xmax, poly_ymax - a)])
-
-    cut_polys = ops.split(poly, cut_line)
-    cut_poly0_ymax = cut_polys.geoms[0].bounds[3]
-    cut_poly1_ymax = cut_polys.geoms[1].bounds[3]
-    compress_poly = cut_polys.geoms[0] if cut_poly0_ymax > cut_poly1_ymax else cut_polys.geoms[1]
+    if a > (poly_ymax - poly_ymin):
+         compress_poly = poly
+    else:
+        cut_line = LineString([(poly_xmin, poly_ymax - a),(poly_xmax, poly_ymax - a)])
+        cut_polys = ops.split(poly, cut_line)
+        cut_poly0_ymax = cut_polys.geoms[0].bounds[3]
+        cut_poly1_ymax = cut_polys.geoms[1].bounds[3]
+        compress_poly = cut_polys.geoms[0] if cut_poly0_ymax > cut_poly1_ymax else cut_polys.geoms[1]
 
     Pc = 0.85 * mat.fc * compress_poly.area        # kgf
     Mcx = Pc * -compress_poly.centroid.y           # kgf-cm
@@ -124,7 +124,6 @@ def computed_capacity_force(poly, neutral_axis_depth):
     # Y0  = “zero” strain fiber in cross-section
     Ymax = poly_ymax 
     Y0 = Ymax - neutral_axis_depth
-
     rbs_df["eps_s"] = mat.eps_cu / neutral_axis_depth * (rbs_df["Yri"] - Y0)
     rbs_df["sigma_s"] = [mat.steel_stress(i) for i in rbs_df["eps_s"]]
 
@@ -226,7 +225,7 @@ angle_deg = 180
 
 # -----------------------------------------------------------
 # 斷面資料 unit:cm
-rec = RectangleSec(width=30, height=50)
+rec = RectangleSec(width=50, height=50)
 rec_poly = Polygon(rec.coordinate)
 rec_df = pd.DataFrame(list(rec_poly.exterior.coords), columns=['Xi', 'Yi'])
 
@@ -235,12 +234,12 @@ rec_df = pd.DataFrame(list(rec_poly.exterior.coords), columns=['Xi', 'Yi'])
 # 鋼筋資料
 # 以斷面形心為原點中心 
 rebars = []
-rebars.append({"area":1*Rebars.rA(25),"coord":( 10,+18.5)})
-rebars.append({"area":1*Rebars.rA(25),"coord":(  0,+18.5)})
-rebars.append({"area":1*Rebars.rA(25),"coord":(-10,+18.5)})
-rebars.append({"area":1*Rebars.rA(25),"coord":( 10,-18.5)})
-rebars.append({"area":1*Rebars.rA(25),"coord":(  0,-18.5)})
-rebars.append({"area":1*Rebars.rA(25),"coord":(-10,-18.5)})
+rebars.append({"area":1*Rebars.rA(25),"coord":( 19,+19)})
+rebars.append({"area":1*Rebars.rA(25),"coord":(  0,+19)})
+rebars.append({"area":1*Rebars.rA(25),"coord":(-19,+19)})
+rebars.append({"area":1*Rebars.rA(25),"coord":( 19,-19)})
+rebars.append({"area":1*Rebars.rA(25),"coord":(  0,-19)})
+rebars.append({"area":1*Rebars.rA(25),"coord":(-19,-19)})
 
 rbs = Rebars(rebars)
 rebarPoints = MultiPoint(rbs.coordinate)
@@ -274,7 +273,7 @@ rec_poly = geometry_transform(rec_poly, x_pc, y_pc, angle_deg)
 rec_poly_xmin, rec_poly_ymin, rec_poly_xmax, rec_poly_ymax = rec_poly.bounds
 rec_df["Xri"] = rec_poly.exterior.coords.xy[0]
 rec_df["Yri"] = rec_poly.exterior.coords.xy[1]
-print(rec_df)
+
 
 # Rebar Coordinates and Transformed Cross-Sectional Properties
 rebarPoints = geometry_transform(rebarPoints, x_pc, y_pc, angle_deg)
@@ -285,17 +284,19 @@ rbs_df["Yri"] = [point.y for point in rebarPoints.geoms]
 # -----------------------------------------------------------
 # 外力資料 unit:t-m
 pu0 =  0.0
-mu0 = 10.0
+mu0 =  1.0
 
 # Make PM curve   
-NUM = 50
+NUM = 30
 
 # 最外側拉力鋼筋距混凝土頂距離
 rbs_lowest = rec_poly_ymax - rbs_df["Yri"].min() 
 c_depth = rec_poly_ymax - rec_poly_ymin
-c_value = np.linspace(1.0 * c_depth,0.0001, NUM)
+c_value = np.linspace( 0.001, 1.1 * c_depth, NUM)
 
 pmCurve = []
+
+# 
 
 for c in c_value:
     eps_t, fs = mat.steel_strain_stress_at_depth(c, rbs_lowest)
@@ -311,10 +312,17 @@ for c in c_value:
                     "eps_t":eps_t,
                     "phi": phi,})
 
+ 
+
 # 全斷面受壓
 # Pure Compression
-# Pc = 0.85*mat.fc*(rec_poly.area-rbs.total_area) + rbs.total_area * mat.fy
-# pmCurve.append({"Pn": Pc/1000, "Mnx": 0, "Mny": 0}) 
+Pn = 0.85*mat.fc*(rec_poly.area-rbs.total_area) + rbs.total_area * mat.fy
+pmCurve.append({"Pn": Pn/1000, 
+                "Mnx": 0,
+                "Mny": 0,
+                "phi_Pn": phi_c * Pn/1000, 
+                "phi_Mnx":0,
+                "phi_Mny":0}) 
 
 pmCurve_df = pd.DataFrame(pmCurve, columns=["Pn",
                                             "Mnx",
@@ -337,15 +345,15 @@ output = pmCurve_df.to_string(formatters={
     'phi_Mny': '{:,.3f}'.format,
     'phi': '{:,.3f}'.format,
 })
-# print(output)
+print(output)
 
 
 
 
 # Plot PM curve
 plt.figure() 
-plt.plot(pmCurve_df["Mnx"], pmCurve_df["Pn"],linestyle='-' , marker='.')
-plt.plot(pmCurve_df["phi_Mnx"], pmCurve_df["phi_Pn"])
+plt.plot(pmCurve_df["Mnx"], pmCurve_df["Pn"],linestyle='--' )
+plt.plot(pmCurve_df["phi_Mnx"], pmCurve_df["phi_Pn"],linestyle='-')
 plt.plot(mu0,pu0,'rx')
 plt.title("P-M Interation Diagram")
 plt.xlabel("M (tf-m)")
